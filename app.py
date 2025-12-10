@@ -1553,7 +1553,7 @@ from decimal import Decimal
 MESS_WINDOWS = {
     'breakfast': (time(7,30), time(11,30)),
     'lunch':     (time(12,0), time(14,0)),
-    'snacks':    (time(16,0), time(18,0)),
+    'snacks':    (time(14,0), time(18,0)),
     'dinner':    (time(19,0), time(23,59)),
 }
 
