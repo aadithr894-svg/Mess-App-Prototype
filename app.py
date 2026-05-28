@@ -30,7 +30,7 @@ mysql_pool = pooling.MySQLConnectionPool(
     database="mess_app",
     port = 28286 , #  ✅ your database name
     user="root",          # ✅ your RDS username
-    password="AVNS_CBoLgI1IB-jcasnZR9N"   # ✅ your RDS password
+    password="GAwExjueEjqyWMnhYaDFgIqxZzwPHObU"   # ✅ your RDS password
 )
 
 
