@@ -26,10 +26,10 @@ mysql_pool = pooling.MySQLConnectionPool(
     pool_name="mypool",
     pool_size=5,
     pool_reset_session=True,
-    host="mysql-28c28287-aadithr894-996e.j.aivencloud.com",  # ✅ RDS endpoint
-    database="defaultdb",
-    port = 24885 , #  ✅ your database name
-    user="avnadmin",          # ✅ your RDS username
+    host="yamabiko.proxy.rlwy.net",  # ✅ RDS endpoint
+    database="mess_app",
+    port = 28286 , #  ✅ your database name
+    user="root",          # ✅ your RDS username
     password="AVNS_CBoLgI1IB-jcasnZR9N"   # ✅ your RDS password
 )
 
