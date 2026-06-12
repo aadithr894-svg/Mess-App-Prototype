@@ -615,7 +615,10 @@ def apply_mess_cut():
         if start_date == tomorrow and current_time >= cutoff_time:
             flash("Cannot apply mess cut for tomorrow after 10 PM today.", "danger")
             return redirect(url_for('apply_mess_cut'))
-
+        total_days = (end_date - start_date).days + 1
+        if total_days < 3:
+            flash(f"❌ Minimum duration for a mess cut is 3 days. You only selected {total_days} day(s).", "danger")
+            return redirect(url_for('apply_mess_cut'))
 
 
         # ---------------- POOL CONNECTION ----------------
