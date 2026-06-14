@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% block content %}
+
+<style>
+.page-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border-light);
+}
+.page-header i {
+    font-size: 1.5rem;
+    color: #27ae60;
+}
+.page-header h4 {
+    font-family: 'Poppins', sans-serif;
+    font-weight: 700;
+    margin: 0;
+    color: var(--primary);
+}
+
+.date-filter {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 1.25rem;
+}
+.date-filter label {
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: var(--sidebar-text);
+}
+.date-filter input, .date-filter select {
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    padding: 0.45rem 0.75rem;
+    font-size: 0.88rem;
+    font-family: 'Inter', sans-serif;
+    color: var(--text-color);
+    background: var(--card-bg);
+}
+.date-filter input:focus, .date-filter select:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+/* Summary strip */
+.summary-strip {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+}
+@media(min-width:500px) { .summary-strip { grid-template-columns: repeat(4,1fr); } }
+
+.summary-card {
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    padding: 1rem 0.75rem;
+    text-align: center;
+    background: var(--card-bg);
+}
+.summary-card .s-icon { font-size: 1.3rem; margin-bottom: 0.35rem; }
+.summary-card .s-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--sidebar-text);
+    margin-bottom: 0.25rem;
+}
+.summary-card .s-val {
+    font-size: 1.8rem;
+    font-weight: 700;
+    font-family: 'Poppins', sans-serif;
+    color: var(--primary);
+    line-height: 1;
+}
+
+/* Table */
+.table-wrap { overflow-x: auto; }
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+thead th {
+    background: var(--sidebar-hover);
+    color: var(--primary);
+    font-weight: 700;
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-bottom: 2px solid var(--border-light);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+tbody td {
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid var(--border-light);
+    color: var(--text-color);
+}
+tbody tr:hover { background: var(--sidebar-hover); }
+tbody tr:last-child td { border-bottom: none; }
+
+.pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+.pill-b { background: #fef9e7; color: #7d6608; }
+.pill-l { background: #eafaf1; color: #1e8449; }
+.pill-s { background: #fdf2f8; color: #884ea0; }
+.pill-d { background: #eaf4fb; color: #1a5276; }
+
+.empty-state {
+    text-align: center;
+    padding: 2.5rem 1rem;
+    color: var(--sidebar-text);
+}
+.empty-state i { font-size: 2.5rem; opacity: 0.3; margin-bottom: 0.75rem; display: block; }
+</style>
+
+<div class="page-header">
+    <i class="fas fa-chart-bar"></i>
+    <h4>Daily Meal Counts</h4>
+</div>
+
+<!-- Today's Live Summary -->
+<div class="summary-strip">
+    <div class="summary-card">
+        <div class="s-icon">☕</div>
+        <div class="s-label">Breakfast</div>
+        <div class="s-val" id="today-b">—</div>
+    </div>
+    <div class="summary-card">
+        <div class="s-icon">🍛</div>
+        <div class="s-label">Lunch</div>
+        <div class="s-val" id="today-l">—</div>
+    </div>
+    <div class="summary-card">
+        <div class="s-icon">🍵</div>
+        <div class="s-label">Snacks</div>
+        <div class="s-val" id="today-s">—</div>
+    </div>
+    <div class="summary-card">
+        <div class="s-icon">🍽️</div>
+        <div class="s-label">Dinner</div>
+        <div class="s-val" id="today-d">—</div>
+    </div>
+</div>
+
+<!-- Filter -->
+<div class="date-filter">
+    <label>Filter by Month:</label>
+    <select id="month-filter" onchange="filterTable()">
+        {% for m in months %}
+        <option value="{{ m.value }}" {% if m.value == current_month %}selected{% endif %}>{{ m.name }}</option>
+        {% endfor %}
+    </select>
+    <span class="text-muted" style="font-size:0.8rem;">Showing saved daily attendance records</span>
+</div>
+
+<!-- Table -->
+<div class="table-wrap">
+    {% if counts_by_date %}
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>☕ Breakfast</th>
+                <th>🍛 Lunch</th>
+                <th>🍵 Snacks</th>
+                <th>🍽️ Dinner</th>
+                <th>Total</th>
+            </tr>
+        </thead>
+        <tbody id="counts-table-body">
+            {% for row in counts_by_date %}
+            <tr data-month="{{ row.month_key }}">
+                <td><strong>{{ row.date }}</strong></td>
+                <td>
+                    {% if row.meals.breakfast %}
+                        <span class="pill pill-b">{{ row.meals.breakfast }}</span>
+                    {% else %}—{% endif %}
+                </td>
+                <td>
+                    {% if row.meals.lunch %}
+                        <span class="pill pill-l">{{ row.meals.lunch }}</span>
+                    {% else %}—{% endif %}
+                </td>
+                <td>
+                    {% if row.meals.snacks %}
+                        <span class="pill pill-s">{{ row.meals.snacks }}</span>
+                    {% else %}—{% endif %}
+                </td>
+                <td>
+                    {% if row.meals.dinner %}
+                        <span class="pill pill-d">{{ row.meals.dinner }}</span>
+                    {% else %}—{% endif %}
+                </td>
+                <td>
+                    <strong>{{ (row.meals.breakfast or 0) + (row.meals.lunch or 0) + (row.meals.snacks or 0) + (row.meals.dinner or 0) }}</strong>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <i class="fas fa-inbox"></i>
+        <p>No attendance records found yet.</p>
+        <p class="small">Records appear here after meals are confirmed by admin.</p>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+// Live today counts
+function loadTodayCounts() {
+    const map = {breakfast:'today-b', lunch:'today-l', snacks:'today-s', dinner:'today-d'};
+    Object.keys(map).forEach(meal => {
+        fetch(`/admin/live_count/${meal}`)
+        .then(r => r.json())
+        .then(d => {
+            if (d.success) document.getElementById(map[meal]).textContent = d.count;
+        }).catch(() => {});
+    });
+}
+
+function filterTable() {
+    const month = document.getElementById('month-filter').value;
+    document.querySelectorAll('#counts-table-body tr').forEach(row => {
+        row.style.display = row.dataset.month === month ? '' : 'none';
+    });
+}
+
+loadTodayCounts();
+setInterval(loadTodayCounts, 30000);
+filterTable(); // apply default filter on load
+</script>
+
+{% endblock %}
