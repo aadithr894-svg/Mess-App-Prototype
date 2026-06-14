@@ -86,7 +86,7 @@ class User(UserMixin):
         self.email = email
         self.user_type = user_type
         self.is_admin = user_type == 'admin'
-        self.is_scanner = user_type == 'scanner
+        self.is_scanner = user_type == 'scanner'
 
 # ---------------- USER LOADER WITH POOL ----------------
 @login_manager.user_loader
