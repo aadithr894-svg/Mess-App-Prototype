@@ -952,15 +952,50 @@ def my_qr():
 from datetime import datetime
 from calendar import month_name
 
+from datetime import date
+
+# ─── UPDATE 1: Pass today's total mess cuts to the dashboard ───
 @app.route('/scanner')
 @login_required
 def scanner_dashboard():
     """Scanner-only QR scanning page."""
-    # Only scanner (or admin) can access
-    if not (current_user.is_scanner or current_user.is_admin):
+    if not (getattr(current_user, 'is_scanner', False) or getattr(current_user, 'is_admin', False)):
         flash("Unauthorized access!", "danger")
         return redirect(url_for('user_dashboard'))
-    return render_template('scanner_dashboard.html')
+    
+    # Fetch today's total mess cuts
+    today = date.today()
+    total_mess_cuts = 0
+    conn = cur = None
+    try:
+        conn = mysql_pool.get_connection()
+        cur = conn.cursor(dictionary=True)
+        cur.execute("""
+            SELECT COUNT(*) AS total_cuts 
+            FROM mess_cut 
+            WHERE %s BETWEEN start_date AND end_date
+        """, (today,))
+        result = cur.fetchone()
+        if result:
+            total_mess_cuts = result['total_cuts']
+    except Exception as e:
+        print("Error fetching mess cuts for scanner:", e)
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+    return render_template('scanner_dashboard.html', total_mess_cuts=total_mess_cuts)
+
+# ─── UPDATE 2: Allow Scanners to access the detailed Mess Cut List ───
+@app.route('/admin/mess_cuts', methods=['GET'])
+@login_required
+def mess_cut_list():
+    # Grant access to both admins and scanners
+    if not (getattr(current_user, 'is_admin', False) or getattr(current_user, 'is_scanner', False)):
+        flash("Unauthorized", "danger")
+        return redirect(url_for('user_dashboard'))
+    
+    # ... (Keep the rest of your existing mess_cut_list logic exactly as it is) ...
 
 
 @app.route('/scanner/counts')
