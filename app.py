@@ -59,7 +59,7 @@ class User(UserMixin):
         self.email = email
         self.user_type = user_type
         self.is_admin = user_type == 'admin'
-
+        self.is_scanner = user_type == 'scanner
 
 # --- Setup MySQL connection pool ---
 
@@ -250,6 +250,8 @@ def login():
 
             if user['user_type'] == "admin":
                 return redirect(url_for('admin_dashboard'))
+            elif user['user_type'] == "scanner":
+                return redirect(url_for('scanner_dashboard'))
             else:
                 return redirect(url_for('user_dashboard'))
         else:
@@ -261,6 +263,7 @@ def login():
 
 
 
+      
 @app.route('/reset_admin')
 def reset_admin():
     conn = mysql_pool.get_connection()            # Get connection from pool
@@ -919,14 +922,6 @@ def my_qr():
 #
 # ADD this line right after is_admin:
 
-class User(UserMixin):
-    def __init__(self, id, name, email, user_type):
-        self.id = id
-        self.name = name
-        self.email = email
-        self.user_type = user_type
-        self.is_admin = user_type == 'admin'
-        self.is_scanner = user_type == 'scanner'   # ← ADD THIS LINE
 
 
 # ─── CHANGE 2 ───────────────────────────────────────────────
@@ -940,15 +935,7 @@ class User(UserMixin):
 #
 # REPLACE with:
 
-            if user['user_type'] == "admin":
-                return redirect(url_for('admin_dashboard'))
-            elif user['user_type'] == "scanner":
-                return redirect(url_for('scanner_dashboard'))
-            else:
-                return redirect(url_for('user_dashboard'))
-
-
-# ─── CHANGE 3 ───────────────────────────────────────────────
+       ───────────────────────────────────────
 # UPDATE the /register route to allow 'scanner' as user_type.
 # The existing register route already handles user_type from the form,
 # so you only need to update the register.html template (see CHANGE 6).
