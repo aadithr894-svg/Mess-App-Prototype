@@ -936,7 +936,7 @@ def my_qr():
 #
 # REPLACE with:
 
-       ───────────────────────────────────────
+     
 # UPDATE the /register route to allow 'scanner' as user_type.
 # The existing register route already handles user_type from the form,
 # so you only need to update the register.html template (see CHANGE 6).
