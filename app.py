@@ -900,6 +900,197 @@ def my_qr():
     img_bytes.seek(0)
     return send_file(img_bytes, mimetype='image/png')
 
+# =============================================================
+# CHANGES TO app.py — Scanner Role Support
+# =============================================================
+# Apply these changes to your existing app.py file.
+# Each section is clearly labeled with WHERE to find/add it.
+# =============================================================
+
+
+# ─── CHANGE 1 ───────────────────────────────────────────────
+# In the User class, add a property for scanner role.
+# FIND this in your existing User class:
+#
+#   class User(UserMixin):
+#       def __init__(self, id, name, email, user_type):
+#           ...
+#           self.is_admin = user_type == 'admin'
+#
+# ADD this line right after is_admin:
+
+class User(UserMixin):
+    def __init__(self, id, name, email, user_type):
+        self.id = id
+        self.name = name
+        self.email = email
+        self.user_type = user_type
+        self.is_admin = user_type == 'admin'
+        self.is_scanner = user_type == 'scanner'   # ← ADD THIS LINE
+
+
+# ─── CHANGE 2 ───────────────────────────────────────────────
+# UPDATE the /login route to handle scanner redirect.
+# FIND in your login() function:
+#
+#   if user['user_type'] == "admin":
+#       return redirect(url_for('admin_dashboard'))
+#   else:
+#       return redirect(url_for('user_dashboard'))
+#
+# REPLACE with:
+
+            if user['user_type'] == "admin":
+                return redirect(url_for('admin_dashboard'))
+            elif user['user_type'] == "scanner":
+                return redirect(url_for('scanner_dashboard'))
+            else:
+                return redirect(url_for('user_dashboard'))
+
+
+# ─── CHANGE 3 ───────────────────────────────────────────────
+# UPDATE the /register route to allow 'scanner' as user_type.
+# The existing register route already handles user_type from the form,
+# so you only need to update the register.html template (see CHANGE 6).
+# No code change needed in register() itself — it already uses:
+#   user_type = request.form['user_type']
+# which will work for 'scanner' automatically.
+
+
+# ─── CHANGE 4 ───────────────────────────────────────────────
+# ADD these two new routes anywhere in app.py (e.g. after admin_qr_scan).
+# These are the only two pages a scanner can access.
+
+from datetime import datetime
+from calendar import month_name
+
+@app.route('/scanner')
+@login_required
+def scanner_dashboard():
+    """Scanner-only QR scanning page."""
+    # Only scanner (or admin) can access
+    if not (current_user.is_scanner or current_user.is_admin):
+        flash("Unauthorized access!", "danger")
+        return redirect(url_for('user_dashboard'))
+    return render_template('scanner_dashboard.html')
+
+
+@app.route('/scanner/counts')
+@login_required
+def scanner_counts():
+    """Scanner-only daily attendance counts page."""
+    if not (current_user.is_scanner or current_user.is_admin):
+        flash("Unauthorized access!", "danger")
+        return redirect(url_for('user_dashboard'))
+
+    counts_by_date = []
+    conn = cur = None
+    try:
+        conn = mysql_pool.get_connection()
+        cur = conn.cursor(dictionary=True, buffered=True)
+
+        cur.execute("""
+            SELECT meal_date, meal_type, total_count
+            FROM daily_meal_attendance
+            ORDER BY meal_date DESC
+        """)
+        rows = cur.fetchall()
+
+        # Group by date
+        date_map = {}
+        for row in rows:
+            date_obj = row['meal_date']
+            if isinstance(date_obj, str):
+                date_obj = datetime.strptime(date_obj, "%Y-%m-%d").date()
+            elif hasattr(date_obj, 'date'):
+                date_obj = date_obj.date()
+
+            key = date_obj.strftime("%Y-%m-%d")
+            if key not in date_map:
+                date_map[key] = {
+                    'date': date_obj.strftime("%d-%m-%Y"),
+                    'month_key': date_obj.strftime("%Y-%m"),
+                    'meals': {'breakfast': 0, 'lunch': 0, 'snacks': 0, 'dinner': 0}
+                }
+            date_map[key]['meals'][row['meal_type']] = row['total_count']
+
+        counts_by_date = list(date_map.values())
+
+    except Exception as e:
+        flash(f"Error fetching counts: {e}", "danger")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+    now = datetime.now()
+    months = [
+        {'value': f"{now.year}-{i:02d}", 'name': month_name[i]}
+        for i in range(1, 13)
+    ]
+    current_month = now.strftime("%Y-%m")
+
+    return render_template(
+        'scanner_counts.html',
+        counts_by_date=counts_by_date,
+        months=months,
+        current_month=current_month
+    )
+
+
+# ─── CHANGE 5 ───────────────────────────────────────────────
+# UPDATE /admin/scan_qr to also allow scanners (not just admins).
+# FIND this check at the top of scan_qr():
+#
+#   if not getattr(current_user, 'is_admin', False):
+#       return jsonify({'success': False, 'message': 'Unauthorized'}), 403
+#
+# REPLACE with:
+
+    if not (getattr(current_user, 'is_admin', False) or
+            getattr(current_user, 'is_scanner', False)):
+        return jsonify({'success': False, 'message': 'Unauthorized'}), 403
+
+# ─── Do the same for /admin/live_count/<meal_type> ───────────
+# FIND:
+#   if not getattr(current_user, 'is_admin', False):
+#       return jsonify({'success': False, 'message': 'Unauthorized'}), 403
+#
+# REPLACE with:
+    if not (getattr(current_user, 'is_admin', False) or
+            getattr(current_user, 'is_scanner', False)):
+        return jsonify({'success': False, 'message': 'Unauthorized'}), 403
+
+
+# ─── CHANGE 6: register.html ─────────────────────────────────
+# In your register.html template, find the user_type select dropdown
+# and add the scanner option:
+#
+# FIND:
+#   <option value="student">Student</option>
+#   <option value="admin">Admin</option>
+#
+# ADD after student:
+#   <option value="scanner">Scanner</option>
+#
+# So it reads:
+#   <option value="student">Student</option>
+#   <option value="scanner">Scanner</option>
+#   <option value="admin">Admin</option>   ← keep or remove as needed
+
+
+# ─── DATABASE NOTE ───────────────────────────────────────────
+# No DB schema changes are needed!
+# The `user_type` column in `users` already stores a VARCHAR string.
+# 'scanner' will be stored just like 'student' or 'admin'.
+#
+# To create a scanner account manually via SQL:
+#   INSERT INTO users (name, email, phone, course, password, user_type, approved)
+#   VALUES ('Scanner1', 'scanner@example.com', '9876543210', 'N/A',
+#           '<hashed_pw>', 'scanner', 1);
+#
+# Or just register through the UI and have admin approve it.
+    
+
 
 # ---------------- ADMIN: SCAN QR ----------------
 @app.route('/admin/qr_scan')
