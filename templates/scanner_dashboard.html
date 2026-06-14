@@ -1,0 +1,330 @@
+{% extends "base.html" %}
+{% block content %}
+
+<style>
+/* ─── Scanner Page Styles (matches Anaswara theme) ─── */
+
+.scanner-hero {
+    background: linear-gradient(135deg, var(--primary) 0%, #1a252f 100%);
+    border-radius: var(--radius);
+    color: #fff;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+.scanner-hero i { font-size: 2rem; opacity: 0.85; }
+.scanner-hero h2 {
+    font-family: 'Poppins', sans-serif;
+    font-size: 1.2rem;
+    font-weight: 700;
+    margin: 0;
+}
+.scanner-hero p { font-size: 0.82rem; opacity: 0.7; margin: 0.2rem 0 0; }
+
+/* Live count bar */
+.live-bar {
+    background: #EBF5FB;
+    border: 1px solid #AED6F1;
+    border-radius: var(--radius);
+    padding: 0.85rem 1.25rem;
+    text-align: center;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #1A5276;
+    margin-bottom: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+.live-bar span#liveCount {
+    font-family: 'Poppins', sans-serif;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+/* QR reader box */
+#reader {
+    width: 100%;
+    border-radius: var(--radius);
+    overflow: hidden;
+    border: 2px dashed var(--border-light);
+    background: #f8f9fa;
+    margin-bottom: 1.25rem;
+}
+
+/* Result message */
+#result {
+    text-align: center;
+    font-size: 0.98rem;
+    font-weight: 600;
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius);
+    margin-bottom: 1.25rem;
+    transition: all 0.3s ease;
+}
+#result.neutral  { background: var(--sidebar-hover); color: var(--sidebar-text); }
+#result.success  { background: #D5F5E3; color: #1E8449; border: 1px solid #A9DFBF; }
+#result.error    { background: #FADBD8; color: #922B21; border: 1px solid #F1948A; }
+
+/* Action buttons */
+.action-row {
+    display: flex;
+    gap: 0.75rem;
+}
+.btn-add {
+    flex: 1;
+    padding: 0.7rem;
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    font-weight: 700;
+    font-size: 0.92rem;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    transition: background 0.2s;
+}
+.btn-add:hover { background: #1a252f; }
+
+.btn-reset {
+    flex: 1;
+    padding: 0.7rem;
+    background: var(--secondary);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    font-weight: 700;
+    font-size: 0.92rem;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+    transition: background 0.2s;
+}
+.btn-reset:hover { background: #c0392b; }
+
+/* Meal badge */
+.meal-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: capitalize;
+    background: rgba(255,255,255,0.2);
+    letter-spacing: 0.04em;
+}
+
+/* Closed state */
+.closed-banner {
+    background: #FEF9E7;
+    border: 1px solid #F9E79F;
+    border-radius: var(--radius);
+    padding: 0.85rem 1rem;
+    text-align: center;
+    color: #7D6608;
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 1.25rem;
+}
+</style>
+
+<!-- Header -->
+<div class="scanner-hero">
+    <i class="fas fa-qrcode"></i>
+    <div>
+        <h2>QR Scanner &nbsp;<span class="meal-badge" id="mealBadge">—</span></h2>
+        <p>Anaswara Mess &mdash; Attendance Scanner</p>
+    </div>
+</div>
+
+<!-- Closed notice (shown only when meal window is closed) -->
+<div class="closed-banner" id="closedBanner" style="display:none;">
+    ⏰ No active meal window right now. Scanner is in standby.
+</div>
+
+<!-- Live count -->
+<div class="live-bar">
+    🍽️ Live Count &nbsp;(<span id="mealTypeLabel">—</span>):&nbsp;
+    <span id="liveCount">0</span>
+</div>
+
+<!-- QR reader -->
+<div id="reader"></div>
+
+<!-- Result -->
+<div id="result" class="neutral">
+    Scan a QR code to record attendance.
+</div>
+
+<!-- Buttons -->
+<div class="action-row">
+    <button class="btn-add" id="addCountBtn">➕ Save Count</button>
+    <button class="btn-reset" id="resetCountBtn">🔄 Reset</button>
+</div>
+
+<!-- html5-qrcode -->
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+const resultDiv     = document.getElementById("result");
+const liveCountEl   = document.getElementById("liveCount");
+const mealLabelEl   = document.getElementById("mealTypeLabel");
+const mealBadgeEl   = document.getElementById("mealBadge");
+const closedBanner  = document.getElementById("closedBanner");
+
+let lastScanTime = 0;
+
+/* ── Meal detection (matches your existing logic) ── */
+function detectMeal() {
+    const now   = new Date();
+    const hours = now.getHours() + now.getMinutes() / 60;
+    if (hours >= 7.5  && hours <= 11.5) return 'breakfast';
+    if (hours >= 12   && hours <= 14)   return 'lunch';
+    if (hours >= 16   && hours <= 17)   return 'snacks';
+    if (hours >= 19.25 && hours <= 21.5) return 'dinner';
+    return 'Closed';
+}
+
+/* ── Update header badge + closed state ── */
+function updateMealUI() {
+    const meal = detectMeal();
+    mealLabelEl.textContent = meal === 'Closed' ? '—' : meal;
+    mealBadgeEl.textContent = meal === 'Closed' ? 'Closed' : meal;
+    closedBanner.style.display = meal === 'Closed' ? 'block' : 'none';
+}
+
+/* ── Live count fetch ── */
+function updateLiveCount() {
+    const meal = detectMeal();
+    if (meal === 'Closed') { liveCountEl.textContent = '0'; return; }
+    fetch(`/admin/live_count/${meal}`)
+        .then(r => r.json())
+        .then(d => { if (d.success) liveCountEl.textContent = d.count; })
+        .catch(() => {});
+}
+
+/* ── Show result message ── */
+function showResult(type, msg) {
+    resultDiv.className = type;   /* neutral | success | error */
+    resultDiv.textContent = msg;
+}
+
+/* ── QR scan success ── */
+function onScanSuccess(decodedText) {
+    const now = Date.now();
+    if (now - lastScanTime < 1200) return;   /* throttle */
+    lastScanTime = now;
+
+    const meal = detectMeal();
+    if (meal === 'Closed') {
+        showResult('error', '⏰ No active meal window. Cannot record attendance.');
+        return;
+    }
+
+    /* Parse user_id — supports both QR formats your app generates */
+    let user_id = null;
+    try {
+        if (decodedText.includes('user_id:')) {
+            user_id = decodedText.split('user_id:')[1].split(',')[0].trim();
+        } else if (decodedText.includes('ID:')) {
+            user_id = decodedText.split('ID:')[1].split('|')[0].trim();
+        } else {
+            user_id = decodedText.trim();
+        }
+    } catch(e) {}
+
+    if (!user_id) {
+        showResult('error', '❌ Invalid QR code format.');
+        return;
+    }
+
+    showResult('neutral', `⏳ Scanning for ${meal}…`);
+
+    fetch("/admin/scan_qr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id, meal_type: meal })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            showResult('success', `✅ ${data.name} marked for ${meal}`);
+            liveCountEl.textContent = data.count;
+        } else {
+            const who = data.name ? ` (${data.name})` : '';
+            showResult('error', `❌ ${data.message}${who}`);
+        }
+    })
+    .catch(() => showResult('error', '❌ Network error. Try again.'));
+}
+
+function onScanFailure() {}   /* suppress noise */
+
+/* ── Start camera ── */
+const html5QrCode = new Html5Qrcode("reader");
+html5QrCode.start(
+    { facingMode: "environment" },
+    {
+        fps: 30,
+        qrbox: 220,
+        experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+    },
+    onScanSuccess,
+    onScanFailure
+).catch(err => {
+    showResult('error', '📷 Camera access denied. Please allow camera permission.');
+});
+
+/* ── Save Count button (same as your addCountBtn) ── */
+document.getElementById("addCountBtn").addEventListener("click", () => {
+    const meal = detectMeal();
+    if (meal === 'Closed') { alert('No active meal window.'); return; }
+
+    fetch("/admin/add_count", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meal_type: meal })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            alert(`✅ Saved: ${data.total_people_added} person(s) for ${meal} on ${data.meal_date}`);
+            updateLiveCount();
+        } else {
+            alert("❌ " + data.message);
+        }
+    });
+});
+
+/* ── Reset Count button (with confirmation, same as yours) ── */
+document.getElementById("resetCountBtn").addEventListener("click", () => {
+    const meal = detectMeal();
+    if (meal === 'Closed') { alert('No active meal window.'); return; }
+
+    if (!confirm(`⚠️ Reset the ${meal} count? This cannot be undone.`)) return;
+
+    fetch("/admin/reset_count", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meal_type: meal })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            liveCountEl.textContent = "0";
+            showResult('success', `🔄 ${meal.charAt(0).toUpperCase()+meal.slice(1)} count reset. Ready for new scans.`);
+        } else {
+            alert("❌ " + data.message);
+        }
+    });
+});
+
+/* ── Init ── */
+updateMealUI();
+updateLiveCount();
+setInterval(() => { updateMealUI(); updateLiveCount(); }, 120000);  /* refresh every 2 min */
+</script>
+
+{% endblock %}
