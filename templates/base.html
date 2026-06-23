@@ -271,9 +271,7 @@ footer { margin-top: 10px; }
                 <i class="fas fa-qrcode"></i> My QR
             </a>
 
-            <a href="{{ url_for('mess_skip') }}" class="{% if request.endpoint == 'mess_skip' %}active{% endif %}">
-                <i class="fas fa-calendar-times"></i> Skip Meal
-            </a>
+           
 
             <a href="{{ url_for('user_bills') }}" class="{% if request.endpoint == 'user_bills' %}active{% endif %}">
                 <i class="fas fa-receipt"></i> My Bill
