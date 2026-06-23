@@ -87,9 +87,25 @@
         <a href="{{ url_for('mess_cut_list') }}">Mess Cuts</a>
         <a href="{{ url_for('late_mess_list') }}">Late Mess</a>
         <a href="{{ url_for('new_users_list') }}">New Users</a>
-	  <a href="{{ url_for('add_mess_cut') }}" class="btn btn-warning">Add Mess Cut</a>
+	  <a href="{{ url_for('add_mess_cut') }}" class="btn btn-warning" onclick="return checkMessCutPassword(event, this.href);">Add Mess Cut</a>
 
     </nav>
+    <script>
+        function checkMessCutPassword(event, targetUrl) {
+            event.preventDefault();
+            const entered = prompt("Enter password to access Add Mess Cut:");
+            if (entered === null) {
+                // User clicked Cancel
+                return false;
+            }
+            if (entered === "siberia@messcut") {
+                window.location.href = targetUrl;
+            } else {
+                alert("Incorrect password.");
+            }
+            return false;
+        }
+    </script>
     <hr>
     
     <div class="container">
