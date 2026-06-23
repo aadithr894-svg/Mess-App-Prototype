@@ -1712,6 +1712,12 @@ def admin_user_fines():
             if fine_value <= 0:
                 return jsonify({"success": False, "message": "Invalid fine amount"})
 
+            # 🚫 Block fines for admin/scanner accounts (e.g. Scanner1, Admin)
+            cur.execute("SELECT user_type FROM users WHERE id=%s", (user_id,))
+            target = cur.fetchone()
+            if target and target['user_type'] in ('admin', 'scanner'):
+                return jsonify({"success": False, "message": "Fines cannot be added to admin/scanner accounts"})
+
             cur.execute("""
                 INSERT INTO fines (user_id, fine_date, meal_type, fine_amount)
                 VALUES (%s, CURDATE(), 'manual', %s)
@@ -1743,6 +1749,7 @@ def admin_user_fines():
             COALESCE(SUM(f.fine_amount), 0) AS total_fines
         FROM users u
         LEFT JOIN fines f ON u.id = f.user_id
+        WHERE u.user_type NOT IN ('admin', 'scanner')
         GROUP BY u.id
         ORDER BY u.name
     """)
@@ -1857,8 +1864,12 @@ def generate_bills():
             cur.execute("DELETE FROM bills WHERE bill_date=%s", (bill_date,))
             conn.commit()
 
-            # All active users
-            cur.execute("SELECT id, name FROM users WHERE is_active = 1")
+            # All active users (excluding admin/scanner accounts)
+            cur.execute("""
+                SELECT id, name FROM users
+                WHERE is_active = 1
+                  AND user_type NOT IN ('admin', 'scanner')
+            """)
             users = cur.fetchall()
 
             for user in users:
@@ -2019,10 +2030,11 @@ def non_scanned_users(meal_type):
     conn = mysql_pool.get_connection()
     cur = conn.cursor(dictionary=True)
     try:
-        # Users who didn't scan for this meal today
+        # Users who didn't scan for this meal today (excluding admin/scanner accounts)
         cur.execute("""
             SELECT id, name FROM users
-            WHERE id NOT IN (
+            WHERE user_type NOT IN ('admin', 'scanner')
+              AND id NOT IN (
                 SELECT user_id FROM meal_attendance
                 WHERE meal_type=%s AND attendance_date=%s
             )
@@ -2113,6 +2125,7 @@ def add_fine():
         #   • have NOT scanned today for this meal
         #   • are NOT in mess_cut during an active cut period
         #   • are NOT in mess_skips for this meal & date
+        #   • are NOT an admin or scanner account (e.g. Scanner1, Admin)
         cur.execute("""
             SELECT u.id, u.name, u.email
             FROM users AS u
@@ -2121,6 +2134,7 @@ def add_fine():
                   AND m.attendance_date = %s
                   AND m.meal_type = %s
             WHERE u.is_active = 1
+              AND u.user_type NOT IN ('admin', 'scanner')
               AND m.user_id IS NULL
               AND u.id NOT IN (
                   SELECT mc.user_id
@@ -2141,8 +2155,15 @@ def add_fine():
         if request.method == 'POST' and 'user_id' in request.form:
             user_ids = request.form.getlist('user_id')
             fines = request.form.getlist('fine')
+
+            # 🚫 Safety net: never fine admin/scanner accounts, even if submitted
+            cur.execute("SELECT id FROM users WHERE user_type IN ('admin', 'scanner')")
+            excluded_ids = {str(row['id']) for row in cur.fetchall()}
+
             inserted = 0
             for uid, fine_amount in zip(user_ids, fines):
+                if uid in excluded_ids:
+                    continue
                 try:
                     fine_val = float(fine_amount) if fine_amount else 0
                 except ValueError:
