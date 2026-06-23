@@ -18,6 +18,16 @@
 <body class="bg-light">
 
 <div class="container py-3">
+
+    <!-- Shown if password is wrong -->
+    <div id="accessDenied" class="text-center mt-5" style="display:none;">
+        <h4 class="text-danger">🚫 Access Denied</h4>
+        <p>Incorrect password. Redirecting to dashboard...</p>
+    </div>
+
+    <!-- Real page content, hidden until password is verified -->
+    <div id="protectedContent" style="display:none;">
+
     <h3 class="mb-3 fw-semibold text-center">➕ Add Mess Cut</h3>
 
     <!-- Flash Messages -->
@@ -71,6 +81,8 @@
 
         </form>
     </div>
+
+    </div><!-- /#protectedContent -->
 </div>
 
 <script>
@@ -91,6 +103,21 @@ document.getElementById("searchBox").addEventListener("keyup", function() {
         options[i].style.display = txt.includes(filter) ? "" : "none";
     }
 });
+</script>
+
+<!-- Password gate: ask before revealing the page content -->
+<script>
+(function() {
+    const entered = prompt("Enter password to access Add Mess Cut:");
+    if (entered === "siberia@messcut") {
+        document.getElementById("protectedContent").style.display = "block";
+    } else {
+        document.getElementById("accessDenied").style.display = "block";
+        setTimeout(function() {
+            window.location.href = "{{ url_for('admin_dashboard') }}";
+        }, 2000);
+    }
+})();
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
