@@ -1,0 +1,120 @@
+{% extends "admin_base.html" %}
+
+{% block content %}
+<h2 style="color:#2c3e50; margin-top:0;">Guest &amp; Extras Charges</h2>
+<p style="color:#7f8c8d; margin-top:-8px;">
+    Manually add charges for <strong>extra meals/curries</strong> or <strong>guest meals</strong>.
+    Every charge added here is automatically included in that resident's bill for the month it was added.
+</p>
+
+<div class="toolbar">
+    <input
+        type="text"
+        id="searchBox"
+        class="search-input"
+        placeholder="Search by name, course or phone..."
+        onkeyup="filterUsers()"
+        autocomplete="off"
+    >
+    <span id="resultCount" style="color:#7f8c8d; font-size:13px; white-space:nowrap;"></span>
+</div>
+
+<div style="overflow-x:auto;">
+<table class="data-table" id="usersTable">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Course</th>
+            <th>Phone</th>
+            <th>Total Extras &amp; Guest (₹)</th>
+            <th>Add Charge</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for user in users %}
+        <tr class="user-row" data-search="{{ (user.name ~ ' ' ~ (user.course or '') ~ ' ' ~ (user.phone or ''))|lower }}">
+            <td>{{ user.name }}</td>
+            <td>{{ user.course or '-' }}</td>
+            <td>{{ user.phone or '-' }}</td>
+            <td class="total-amt" id="total-{{ user.id }}">₹{{ "%.2f"|format(user.total_extras) }}</td>
+            <td>
+                <div class="charge-form">
+                    <select id="type-{{ user.id }}">
+                        <option value="extra">Extra</option>
+                        <option value="guest">Guest</option>
+                    </select>
+                    <input type="number" id="amount-{{ user.id }}" placeholder="Amount" min="0" step="0.01">
+                    <input type="text" id="remarks-{{ user.id }}" placeholder="Remarks (optional)">
+                    <button class="btn-add" onclick="addCharge({{ user.id }})" id="btn-{{ user.id }}">Add</button>
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+<p class="no-results" id="noResults">No matching users found.</p>
+</div>
+
+<script>
+function filterUsers() {
+    const query = document.getElementById('searchBox').value.trim().toLowerCase();
+    const rows = document.querySelectorAll('#usersTable tbody tr.user-row');
+    let visibleCount = 0;
+
+    rows.forEach(row => {
+        const match = row.dataset.search.includes(query);
+        row.style.display = match ? '' : 'none';
+        if (match) visibleCount++;
+    });
+
+    document.getElementById('resultCount').textContent =
+        query ? `${visibleCount} of ${rows.length} shown` : '';
+    document.getElementById('noResults').style.display = visibleCount === 0 ? 'block' : 'none';
+}
+
+function addCharge(userId) {
+    const amountInput = document.getElementById('amount-' + userId);
+    const typeSelect = document.getElementById('type-' + userId);
+    const remarksInput = document.getElementById('remarks-' + userId);
+    const btn = document.getElementById('btn-' + userId);
+
+    const amount = parseFloat(amountInput.value);
+    if (!amount || amount <= 0) {
+        alert('Please enter a valid amount.');
+        amountInput.focus();
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Adding...';
+
+    fetch("{{ url_for('admin_guest') }}", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            user_id: userId,
+            amount: amount,
+            charge_type: typeSelect.value,
+            remarks: remarksInput.value
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            document.getElementById('total-' + userId).textContent = '₹' + data.new_total.toFixed(2);
+            amountInput.value = '';
+            remarksInput.value = '';
+        } else {
+            alert(data.message || 'Could not add charge.');
+        }
+    })
+    .catch(err => {
+        alert('Network error: ' + err);
+    })
+    .finally(() => {
+        btn.disabled = false;
+        btn.textContent = 'Add';
+    });
+}
+</script>
+{% endblock %}
