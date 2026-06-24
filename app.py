@@ -1902,7 +1902,7 @@ def admin_user_fines():
 # into the same bill line item when bills are generated.
 @app.route('/admin/guest', methods=['GET', 'POST'])
 @login_required
-def admin_guest1():
+def admin_guest():
     if not getattr(current_user, 'is_admin', False):
         flash("Unauthorized access!", "danger")
         return redirect(url_for('index'))
