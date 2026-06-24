@@ -249,6 +249,9 @@ footer { margin-top: 10px; }
             <a href="{{ url_for('generate_bills') }}" class="{% if request.endpoint == 'generate_bills' %}active{% endif %}">
                 <i class="fas fa-file-invoice-dollar"></i> Bills
             </a>
+            <a href="{{ url_for('admin_guest') }}" class="{% if request.endpoint == 'admin_guest' %}active{% endif %}">
+                <i class="fas fa-user-friends"></i> Guest & Extras
+            </a>
 
             <a href="{{ url_for('mess_menu') }}" class="{% if request.endpoint == 'mess_menu' %}active{% endif %}">
                 <i class="fas fa-utensils"></i> Mess Menu
