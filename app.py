@@ -538,7 +538,141 @@ def my_mess_cuts():
 
     return render_template('my_mess_cuts.html', cuts=cuts)
 
+# ─────────────────────────────────────────────────────────────
+# ADMIN: GUEST & EXTRAS CHARGES
+# Add this route anywhere in app.py after your imports.
+#
+# Required DB table (run once):
+#
+#   CREATE TABLE IF NOT EXISTS guest_charges (
+#       id          INT AUTO_INCREMENT PRIMARY KEY,
+#       user_id     INT         NOT NULL,
+#       charge_type ENUM('extra','guest') NOT NULL DEFAULT 'extra',
+#       amount      DECIMAL(10,2) NOT NULL,
+#       remarks     VARCHAR(255)  DEFAULT NULL,
+#       bill_month  DATE          NOT NULL,   -- first day of the month, e.g. 2025-06-01
+#       created_at  DATETIME      DEFAULT CURRENT_TIMESTAMP,
+#       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+#   );
+# ─────────────────────────────────────────────────────────────
 
+from datetime import date
+
+@app.route('/admin/guest', methods=['GET', 'POST'])
+@login_required
+def admin_guest():
+    if not getattr(current_user, 'is_admin', False):
+        flash("Unauthorized access!", "danger")
+        return redirect(url_for('admin_dashboard'))
+
+    conn = cur = None
+
+    # ── POST: add a charge (AJAX / JSON) ──────────────────────
+    if request.method == 'POST':
+        data        = request.get_json(silent=True) or {}
+        user_id     = data.get('user_id')
+        amount      = data.get('amount')
+        charge_type = data.get('charge_type', 'extra')
+        remarks     = data.get('remarks', '')
+
+        if not user_id or not amount or float(amount) <= 0:
+            return jsonify({'success': False, 'message': 'Invalid data.'}), 400
+
+        if charge_type not in ('extra', 'guest'):
+            return jsonify({'success': False, 'message': 'Invalid charge type.'}), 400
+
+        # bill_month = first day of the current month
+        today      = date.today()
+        bill_month = date(today.year, today.month, 1)
+
+        try:
+            conn = mysql_pool.get_connection()
+            cur  = conn.cursor(dictionary=True)
+
+            # Insert the new charge
+            cur.execute("""
+                INSERT INTO guest_charges (user_id, charge_type, amount, remarks, bill_month)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (user_id, charge_type, float(amount), remarks or None, bill_month))
+            conn.commit()
+
+            # Return the updated total for this user + month
+            cur.execute("""
+                SELECT COALESCE(SUM(amount), 0) AS total
+                FROM guest_charges
+                WHERE user_id = %s AND bill_month = %s
+            """, (user_id, bill_month))
+            row = cur.fetchone()
+            new_total = float(row['total']) if row else 0.0
+
+            return jsonify({'success': True, 'new_total': new_total})
+
+        except Exception as e:
+            if conn:
+                conn.rollback()
+            print("admin_guest POST error:", e)
+            return jsonify({'success': False, 'message': str(e)}), 500
+
+        finally:
+            if cur:  cur.close()
+            if conn: conn.close()
+
+    # ── GET: render the page ───────────────────────────────────
+    try:
+        today      = date.today()
+        bill_month = date(today.year, today.month, 1)
+
+        conn = mysql_pool.get_connection()
+        cur  = conn.cursor(dictionary=True)
+
+        # All active non-admin users with their current-month extras total
+        cur.execute("""
+            SELECT
+                u.id,
+                u.name,
+                u.course,
+                u.phone,
+                COALESCE(SUM(gc.amount), 0) AS total_extras
+            FROM users u
+            LEFT JOIN guest_charges gc
+                ON gc.user_id = u.id AND gc.bill_month = %s
+            WHERE u.user_type NOT IN ('admin', 'scanner')
+              AND u.approved  = 1
+            GROUP BY u.id, u.name, u.course, u.phone
+            ORDER BY u.name
+        """, (bill_month,))
+        users = cur.fetchall()
+
+        # Today's recent charges for the log panel
+        cur.execute("""
+            SELECT
+                gc.id,
+                u.name,
+                gc.charge_type,
+                gc.amount,
+                gc.remarks,
+                gc.created_at
+            FROM guest_charges gc
+            JOIN users u ON u.id = gc.user_id
+            WHERE DATE(gc.created_at) = CURDATE()
+            ORDER BY gc.created_at DESC
+            LIMIT 20
+        """)
+        recent_charges = cur.fetchall()
+
+    except Exception as e:
+        flash(f"Error loading page: {e}", "danger")
+        users          = []
+        recent_charges = []
+        print("admin_guest GET error:", e)
+
+    finally:
+        if cur:  cur.close()
+        if conn: conn.close()
+
+    return render_template('admin_guest.html',
+                           users=users,
+                           recent_charges=recent_charges)
 # ---------------- ADMIN: VALIDATE QR ----------------
 @app.route('/admin/validate_qr', methods=['POST'])
 @login_required
