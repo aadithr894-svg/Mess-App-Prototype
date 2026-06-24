@@ -560,7 +560,7 @@ from datetime import date
 
 @app.route('/admin/guest', methods=['GET', 'POST'])
 @login_required
-def admin_guest():
+def admin_guestq():
     if not getattr(current_user, 'is_admin', False):
         flash("Unauthorized access!", "danger")
         return redirect(url_for('admin_dashboard'))
