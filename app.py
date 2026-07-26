@@ -656,9 +656,22 @@ def apply_mess_cut():
                     INSERT INTO mess_cut (user_id, start_date, end_date, course, date_applied)
                     VALUES (%s, %s, %s, %s, NOW())
                 """, (current_user.id, start_date, end_date, course))
+
+                # Delete any mess skips that fall within the mess cut date range
+                # (mess cut takes priority — skips on those days are no longer needed)
+                cur.execute("""
+                    DELETE FROM mess_skips
+                    WHERE user_id = %s
+                      AND skip_date BETWEEN %s AND %s
+                """, (current_user.id, start_date, end_date))
+                deleted_skips = cur.rowcount
+
                 conn.commit()
 
-            flash("Mess cut applied successfully!", "success")
+            if deleted_skips > 0:
+                flash(f"Mess cut applied successfully! {deleted_skips} existing mess skip(s) within this date range were removed.", "success")
+            else:
+                flash("Mess cut applied successfully!", "success")
             return redirect(url_for('my_mess_cuts'))
 
         except Exception as e:
@@ -2389,15 +2402,24 @@ def mess_skip():
             """, (current_user.id, skip_date))
             meal_count = cur.fetchone()['cnt']
 
-            # 🔥 If 4 meals skipped → add mess cut
+            # 🔥 If 4 meals skipped → add mess cut and remove the individual skips
             if meal_count == 4:
                 cur.execute("""
                     INSERT INTO mess_cut (user_id, start_date, end_date)
                     VALUES (%s, %s, %s)
                 """, (current_user.id, skip_date, skip_date))
 
+                # Delete all mess skips for this day — mess cut supersedes them
+                cur.execute("""
+                    DELETE FROM mess_skips
+                    WHERE user_id = %s AND skip_date = %s
+                """, (current_user.id, skip_date))
+
             conn.commit()
-            flash("✅ Mess skip updated successfully!", "success")
+            if meal_count == 4:
+                flash("✅ All meals skipped — a full-day mess cut has been applied and your individual skips for this day have been removed.", "success")
+            else:
+                flash("✅ Mess skip updated successfully!", "success")
 
         except Exception as e:
             conn.rollback()
