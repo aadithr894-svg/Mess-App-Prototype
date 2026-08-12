@@ -28,9 +28,9 @@ mysql_pool = pooling.MySQLConnectionPool(
     pool_reset_session=True,
     host="tokaido.proxy.rlwy.net",  # ✅ RDS endpoint
     database="mess_app",
-    port = 44239 , #  ✅ your database name
+    port = 13459 , #  ✅ your database name
     user="root",          # ✅ your RDS username
-    password="BTKvRjWADQyeUEMAflECYbNVTKAzJIVT"   # ✅ your RDS password
+    password="cEwarayamfiJIVpmEbDoPJoBAVgkFSSv"   # ✅ your RDS password
 )
 
 
