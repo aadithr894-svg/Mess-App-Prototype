@@ -632,7 +632,11 @@ def apply_mess_cut():
             flash("Cannot apply mess cut for tomorrow after 10 PM today.", "danger")
             return redirect(url_for('apply_mess_cut'))
 
+        duration_days = (end_date - start_date).days + 1
 
+        if duration_days < 3:
+            flash("Mess cut must be for a minimum of 3 days.", "danger")
+            return redirect(url_for('apply_mess_cut'))
 
         # ---------------- POOL CONNECTION ----------------
         conn = mysql_pool.get_connection()  # Get connection from pool
