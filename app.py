@@ -235,6 +235,18 @@ def login():
 
         conn = mysql_pool.get_connection()       # Get connection from pool
         cur = conn.cursor(dictionary=True)      # DictCursor equivalent
+
+        # First, check if the user is in the new_users (pending approval) table
+        cur.execute("SELECT * FROM new_users WHERE email=%s", (email,))
+        pending_user = cur.fetchone()
+
+        if pending_user and check_password_hash(pending_user['password'], password):
+            cur.close()
+            conn.close()
+            flash("⏳ Awaiting admin approval. You can only log in after your account has been approved.", "warning")
+            return redirect(url_for('login'))
+
+        # Then check the approved users table
         cur.execute("SELECT * FROM users WHERE email=%s", (email,))
         user = cur.fetchone()
         cur.close()
