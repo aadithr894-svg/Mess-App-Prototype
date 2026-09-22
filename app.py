@@ -14,57 +14,29 @@ app = Flask(__name__)
 app.config.from_object(Config)
 
 # ---------------- MySQL Connection Pool ----------------
-# app.py (or wherever you configure your DB)
 import os
 from mysql.connector import pooling, Error
-from mysql.connector import pooling
 
-
-
+# Pool sized for real concurrency instead of the previous pool_size=5, which
+# forced requests to queue/wait for a free connection under any real load.
+# pool_reset_session=True keeps sessions clean between checkouts.
+# connection_timeout avoids hung requests if the DB is briefly unreachable.
+DB_POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", 20))
 
 mysql_pool = pooling.MySQLConnectionPool(
     pool_name="mypool",
-    pool_size=5,
+    pool_size=DB_POOL_SIZE,
     pool_reset_session=True,
-    host="tokaido.proxy.rlwy.net",  # ✅ RDS endpoint
+    connection_timeout=10,
+    host="tokaido.proxy.rlwy.net",
     database="mess_app",
-    port = 13459 , #  ✅ your database name
-    user="root",          # ✅ your RDS username
-    password="cEwarayamfiJIVpmEbDoPJoBAVgkFSSv"   # ✅ your RDS password
+    port=13459,
+    user="root",
+    password="cEwarayamfiJIVpmEbDoPJoBAVgkFSSv",
 )
 
 
-# --- Setup MySQL connection pool ---
-
-
-# --- Helper function to get connection ---
-def get_db_connection():
-    try:
-        return mysql_pool.get_connection()
-    except Error as e:
-        print(f"❌ Error getting connection from pool: {e}")
-        raise
-
-
-    # ---------------- LOGIN MANAGER ----------------
-login_manager = LoginManager()
-login_manager.init_app(app)
-login_manager.login_view = 'login'
-
-# ---------------- USER CLASS ----------------
-class User(UserMixin):
-    def __init__(self, id, name, email, user_type):
-        self.id = id
-        self.name = name
-        self.email = email
-        self.user_type = user_type
-        self.is_admin = user_type == 'admin'
-        self.is_scanner = user_type == 'scanner'
-
-# --- Setup MySQL connection pool ---
-
-
-# --- Helper function to get connection ---
+# --- Helper function to get a pooled connection ---
 def get_db_connection():
     try:
         return mysql_pool.get_connection()
@@ -1623,15 +1595,18 @@ def users_meal_counts():
     cur = conn.cursor(MySQLdb.cursors.DictCursor)
 
     try:
-        for meal in ['breakfast', 'lunch', 'dinner']:
-            cur.execute("""
-                SELECT u.name, u.email, u.course, COUNT(ma.id) AS total_scans
-                FROM meal_attendance ma
-                JOIN users u ON ma.user_id = u.id
-                WHERE ma.meal_type=%s AND ma.attendance_date=%s
-                GROUP BY ma.user_id
-            """, (meal, today))
-            counts[meal] = cur.fetchall()
+        # One query for all three meals instead of three round-trips to the DB.
+        cur.execute("""
+            SELECT u.name, u.email, u.course, ma.meal_type, COUNT(ma.id) AS total_scans
+            FROM meal_attendance ma
+            JOIN users u ON ma.user_id = u.id
+            WHERE ma.attendance_date=%s AND ma.meal_type IN ('breakfast', 'lunch', 'dinner')
+            GROUP BY ma.user_id, ma.meal_type
+        """, (today,))
+
+        counts = {'breakfast': [], 'lunch': [], 'dinner': []}
+        for row in cur.fetchall():
+            counts[row['meal_type']].append(row)
 
         return jsonify({'success': True, 'data': counts})
 
