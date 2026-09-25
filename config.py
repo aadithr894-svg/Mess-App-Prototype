@@ -14,5 +14,5 @@ class Config:
 
     # Brevo transactional email API (used by /forgot instead of SMTP)
     BREVO_API_KEY = os.environ.get('BREVO_API_KEY', '')
-    BREVO_SENDER_EMAIL = os.environ.get('BREVO_SENDER_EMAIL', 'messsiberia@gmail.com')
-    BREVO_SENDER_NAME = os.environ.get('BREVO_SENDER_NAME', 'Mess App')
+    BREVO_SENDER_EMAIL = os.environ.get('BREVO_SENDER_EMAIL', 'aadithr894@gmail.com')
+    BREVO_SENDER_NAME = os.environ.get('BREVO_SENDER_NAME', 'SiberiaMess')
