@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, send_file
+from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify, send_file, g
 from flask_login import LoginManager, login_user, logout_user, login_required, UserMixin, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 import qrcode
@@ -38,11 +38,107 @@ mysql_pool = pooling.MySQLConnectionPool(
 
 # --- Helper function to get a pooled connection ---
 def get_db_connection():
+    """
+    Get a connection from the pool. Pooled connections that have sat idle
+    can be silently dropped by the DB host (Railway's proxy in particular
+    times out idle connections) — using one of those without checking
+    raises 'MySQL server has gone away' mid-request, which is what makes
+    the site look like it "randomly stops". ping(reconnect=True) detects
+    that and transparently reconnects before we hand the connection back.
+
+    Every connection handed out here is also registered on `g` so that
+    teardown_request (below) can force it back to the pool at the end of
+    the request no matter what the route code does. Most routes in this
+    file open a connection and only close it on the success path with no
+    try/finally — any exception raised before that close() permanently
+    removed that connection from the pool. Enough of those over a day of
+    traffic is exactly how a pool of 20 quietly runs dry and the site
+    starts hanging until restart. This makes that class of bug harmless.
+    """
     try:
-        return mysql_pool.get_connection()
+        conn = mysql_pool.get_connection()
     except Error as e:
         print(f"❌ Error getting connection from pool: {e}")
         raise
+    try:
+        conn.ping(reconnect=True, attempts=3, delay=1)
+    except Error as e:
+        print(f"❌ Stale connection could not be revived: {e}")
+        try:
+            conn.close()
+        except Error:
+            pass
+        raise
+
+    if not hasattr(g, "_db_conns"):
+        g._db_conns = []
+    g._db_conns.append(conn)
+    return conn
+
+
+@app.teardown_appcontext
+def _close_leaked_db_connections(exc):
+    """
+    Safety net: forcibly return any connection that a route acquired but
+    didn't close (e.g. because it raised before reaching its cur.close()/
+    conn.close() lines). Closing an already-closed pooled connection here
+    is a harmless no-op, so this is safe to run every request regardless
+    of whether the route already cleaned up properly.
+    """
+    for conn in getattr(g, "_db_conns", []):
+        try:
+            conn.close()
+        except Error:
+            pass
+    if hasattr(g, "_db_conns"):
+        g._db_conns.clear()
+
+
+import contextlib
+
+
+@contextlib.contextmanager
+def db_cursor(dictionary=True, commit=False):
+    """
+    Preferred way to talk to the DB from here on.
+
+    Guarantees the connection is ALWAYS returned to the pool, even if the
+    route raises — the previous per-route code acquired a connection and
+    then called cur.close()/conn.close() manually, so any exception raised
+    before those two lines permanently leaked that connection out of the
+    pool. Enough leaked connections over a day of traffic is exactly what
+    makes a pool of 20 quietly run out and the site start hanging until
+    restart.
+
+    Usage:
+        with db_cursor() as (conn, cur):
+            cur.execute("SELECT ...", (x,))
+            row = cur.fetchone()
+
+        with db_cursor(commit=True) as (conn, cur):
+            cur.execute("UPDATE ...", (x,))
+    """
+    conn = get_db_connection()
+    cur = conn.cursor(dictionary=dictionary)
+    try:
+        yield conn, cur
+        if commit:
+            conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Error:
+            pass
+        raise
+    finally:
+        try:
+            cur.close()
+        except Error:
+            pass
+        try:
+            conn.close()  # returns the connection to the pool
+        except Error:
+            pass
 
 
 # ---------------- LOGIN MANAGER ----------------
@@ -63,7 +159,7 @@ class User(UserMixin):
 # ---------------- USER LOADER WITH POOL ----------------
 @login_manager.user_loader
 def load_user(user_id):
-    conn = mysql_pool.get_connection()             # Get connection from pool
+    conn = get_db_connection()             # Get connection from pool
     cur = conn.cursor(dictionary=True)            # DictCursor equivalent
     cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
     data = cur.fetchone()
@@ -79,7 +175,7 @@ def load_user(user_id):
 from werkzeug.security import generate_password_hash
 
 def create_admin():
-    conn = mysql_pool.get_connection()             # Get connection from pool
+    conn = get_db_connection()             # Get connection from pool
     cur = conn.cursor(dictionary=True)            # DictCursor equivalent
 
     # Check if admin already exists
@@ -152,7 +248,7 @@ def register():
             return redirect(url_for('register'))
 
         # ---------------- POOL CONNECTION ----------------
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
 
         # Hash the password
@@ -188,7 +284,7 @@ def new_users_list():
         flash("Unauthorized access!", "danger")
         return redirect(url_for('index'))
 
-    conn = mysql_pool.get_connection()          # Get connection from pool
+    conn = get_db_connection()          # Get connection from pool
     cur = conn.cursor(dictionary=True)          # DictCursor equivalent
     cur.execute("SELECT * FROM new_users")
     users = cur.fetchall()
@@ -205,7 +301,7 @@ def login():
         email = request.form['email']
         password = request.form['password']
 
-        conn = mysql_pool.get_connection()       # Get connection from pool
+        conn = get_db_connection()       # Get connection from pool
         cur = conn.cursor(dictionary=True)      # DictCursor equivalent
 
         # First, check if the user is in the new_users (pending approval) table
@@ -251,7 +347,7 @@ def login():
       
 @app.route('/reset_admin')
 def reset_admin():
-    conn = mysql_pool.get_connection()            # Get connection from pool
+    conn = get_db_connection()            # Get connection from pool
     cur = conn.cursor()                           # Regular cursor, no dict needed
     hashed_password = generate_password_hash("admin123")
 
@@ -289,7 +385,7 @@ def approve_user(user_id):
         flash("❌ Unauthorized", "danger")
         return redirect(url_for('user_dashboard'))
 
-    conn = mysql_pool.get_connection()         # Get connection from pool
+    conn = get_db_connection()         # Get connection from pool
     cur = conn.cursor(dictionary=True)         # DictCursor equivalent
 
     try:
@@ -363,7 +459,7 @@ def approve_user(user_id):
 # ---------------- REJECT USER ----------------
 @app.route('/reject_user/<int:user_id>')
 def reject_user(user_id):
-    conn = mysql_pool.get_connection()          # Get connection from pool
+    conn = get_db_connection()          # Get connection from pool
     cur = conn.cursor(dictionary=True)          # DictCursor equivalent
 
     try:
@@ -405,7 +501,7 @@ def user_dashboard():
     qr_code_b64 = base64.b64encode(buffer.getvalue()).decode('ascii')
 
     # ---------------- Fetch late mess requests ----------------
-    conn = mysql_pool.get_connection()         # Get connection from pool
+    conn = get_db_connection()         # Get connection from pool
     cur = conn.cursor(dictionary=True)         # DictCursor equivalent
 
     try:
@@ -441,7 +537,7 @@ def admin_dashboard():
 @app.route('/admin/users')
 @login_required
 def users_list():
-    conn = mysql_pool.get_connection()          # Get connection from pool
+    conn = get_db_connection()          # Get connection from pool
     cur = conn.cursor(dictionary=True)          # DictCursor equivalent
 
     try:
@@ -466,7 +562,7 @@ def delete_user(user_id):
         flash("Unauthorized", "danger")
         return redirect(url_for('user_dashboard'))
 
-    conn = mysql_pool.get_connection()          # Get connection from pool
+    conn = get_db_connection()          # Get connection from pool
     cur = conn.cursor()                          # Regular cursor
 
     try:
@@ -495,7 +591,7 @@ from flask_login import login_required, current_user
 @app.route('/my_mess_cuts')
 @login_required
 def my_mess_cuts():
-    conn = mysql_pool.get_connection()            # Get connection from pool
+    conn = get_db_connection()            # Get connection from pool
     cur = conn.cursor(dictionary=True)            # DictCursor equivalent
 
     try:
@@ -552,7 +648,7 @@ def validate_qr():
     except:
         return jsonify({"success": False, "message": "Invalid QR code"}), 400
 
-    conn = mysql_pool.get_connection()             # Get connection from pool
+    conn = get_db_connection()             # Get connection from pool
     cur = conn.cursor(dictionary=True)             # DictCursor equivalent
 
     try:
@@ -623,7 +719,7 @@ def apply_mess_cut():
             return redirect(url_for('apply_mess_cut'))
 
         # ---------------- POOL CONNECTION ----------------
-        conn = mysql_pool.get_connection()  # Get connection from pool
+        conn = get_db_connection()  # Get connection from pool
 
         try:
             # Use buffered cursor to avoid "Unread result found"
@@ -695,7 +791,7 @@ def mess_cut_list():
     month_filter = request.args.get('month', datetime.now().strftime("%Y-%m"))
     filter_year, filter_month = map(int, month_filter.split("-"))
 
-    conn = mysql_pool.get_connection()          # Get connection from pool
+    conn = get_db_connection()          # Get connection from pool
     cur = conn.cursor(dictionary=True)          # DictCursor equivalent
 
     try:
@@ -805,7 +901,7 @@ def request_late_mess():
     start_time = time(16, 0)  # 16:00
     end_time = time(20, 30)   # 20:30
 
-    conn = mysql_pool.get_connection()
+    conn = get_db_connection()
     # ✅ Use buffered cursor so all results are consumed
     cur = conn.cursor(dictionary=True, buffered=True)
 
@@ -880,7 +976,7 @@ def request_late_mess():
 @app.route('/my_qr')
 @login_required
 def my_qr():
-    conn = mysql_pool.get_connection()          # Get connection from pool
+    conn = get_db_connection()          # Get connection from pool
     cur = conn.cursor(dictionary=True)          # DictCursor equivalent
 
     try:
@@ -969,7 +1065,7 @@ def scanner_dashboard():
     total_mess_cuts = 0
     conn = cur = None
     try:
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
         cur.execute("""
             SELECT COUNT(*) AS total_cuts 
@@ -1004,7 +1100,7 @@ def scanner_counts():
     counts_by_date = []
     conn = cur = None
     try:
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor(dictionary=True, buffered=True)
 
         cur.execute("""
@@ -1149,7 +1245,7 @@ def scan_qr():
     if not user_id or meal_type not in ['breakfast', 'lunch', 'dinner', 'snacks']:
         return jsonify({'success': False, 'message': 'Invalid data'}), 400
 
-    conn = mysql_pool.get_connection()
+    conn = get_db_connection()
     try:
         with conn.cursor(dictionary=True, buffered=True) as cur:
             # 🔹 Fetch user name
@@ -1263,7 +1359,7 @@ def live_count(meal_type):
 
     today = date.today()
     try:
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
         cur.execute("""
             SELECT COUNT(*) AS total
@@ -1296,7 +1392,7 @@ live_counts = {"breakfast": 0, "lunch": 0, "dinner": 0}
 @login_required
 def qr_scan_counts():
     counts_by_date = {}
-    conn = mysql_pool.get_connection()
+    conn = get_db_connection()
     cur = conn.cursor()
 
     try:
@@ -1362,7 +1458,7 @@ def reset_count():
 
     meal = request.json.get('meal_type')
     today = date.today()
-    conn = mysql_pool.get_connection()
+    conn = get_db_connection()
     cur = conn.cursor()
 
     try:
@@ -1401,7 +1497,7 @@ def admin_qr_count():
         return redirect(url_for('user_dashboard'))
 
     counts_by_date = {}
-    conn = mysql_pool.get_connection()          # Get connection from pool
+    conn = get_db_connection()          # Get connection from pool
     cur = conn.cursor()
 
     try:
@@ -1456,7 +1552,7 @@ def add_count():
     if meal_type not in ['breakfast', 'lunch', 'dinner', 'snacks']:
         return jsonify({'success': False, 'message': 'Invalid meal type'}), 400
 
-    conn = mysql_pool.get_connection()
+    conn = get_db_connection()
     cur = conn.cursor(dictionary=True)
     try:
         # Count current attendance for that meal & date
@@ -1516,7 +1612,7 @@ def add_meal_count():
             return redirect(url_for('add_meal_count'))
 
         try:
-            conn = mysql_pool.get_connection()
+            conn = get_db_connection()
             cur = conn.cursor()
 
             cur.execute(
@@ -1546,7 +1642,7 @@ def add_meal_count():
     # ---------- GET: show counts ----------
     counts_by_date = {}
     try:
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
 
         cur.execute(
@@ -1591,7 +1687,7 @@ def users_meal_counts():
     today = date.today()
     counts = {}
 
-    conn = mysql_pool.get_connection()
+    conn = get_db_connection()
     cur = conn.cursor(MySQLdb.cursors.DictCursor)
 
     try:
@@ -1637,7 +1733,7 @@ def add_mess_cut_admin():
     users = []
 
     try:
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
 
         # Load users for dropdown
@@ -1727,7 +1823,7 @@ def admin_user_fines():
     if not current_user.is_admin:
         return jsonify({"error": "Unauthorized"}), 403
 
-    conn = mysql_pool.get_connection()
+    conn = get_db_connection()
     cur = conn.cursor(dictionary=True, buffered=True)
 
     # ---------- AJAX Fine Add ----------
@@ -1801,7 +1897,7 @@ def admin_guest():
         flash("Unauthorized access!", "danger")
         return redirect(url_for('index'))
 
-    conn = mysql_pool.get_connection()
+    conn = get_db_connection()
     cur = conn.cursor(dictionary=True, buffered=True)
 
     # Make sure the table exists (safe to run every time)
@@ -1976,7 +2072,7 @@ def generate_bills():
     conn = cur = None
 
     try:
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor(dictionary=True, buffered=True)
 
         if request.method == 'POST':
@@ -2283,7 +2379,7 @@ def non_scanned_users(meal_type):
         return redirect(url_for('admin_dashboard'))
 
     today = date.today()
-    conn = mysql_pool.get_connection()
+    conn = get_db_connection()
     cur = conn.cursor(dictionary=True)
     try:
         # Users who didn't scan for this meal today (excluding admin/scanner accounts)
@@ -2362,7 +2458,7 @@ def add_fine():
 
     conn = cur = None
     try:
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor(dictionary=True, buffered=True)
 
         # Remove fines for users who have since scanned
@@ -2459,7 +2555,7 @@ def add_fine():
 @app.route('/user/bills')
 @login_required
 def user_bills():
-    conn = mysql_pool.get_connection()
+    conn = get_db_connection()
     cur = conn.cursor(dictionary=True)
 
     bills = []
@@ -2499,7 +2595,7 @@ def users_mess_count():
         return jsonify({'users': [], 'error': 'Unauthorized'}), 403
 
     try:
-        conn = mysql_pool.get_connection()        # ✅ Get connection from pool
+        conn = get_db_connection()        # ✅ Get connection from pool
         cur = conn.cursor(MySQLdb.cursors.DictCursor)
 
         cur.execute("SELECT name, email, user_type, mess_count FROM users")
@@ -2542,7 +2638,7 @@ def admin_validate_qr():
         return jsonify({"success": False, "message": "Invalid QR Code"}), 400
 
     try:
-        conn = mysql_pool.get_connection()      # ✅ Get connection from pool
+        conn = get_db_connection()      # ✅ Get connection from pool
         cur = conn.cursor()
         cur.execute("UPDATE users SET mess_count = mess_count + 1 WHERE id = %s", (user_id,))
         conn.commit()
@@ -2575,7 +2671,7 @@ def late_mess_list():
         return redirect(url_for('admin_dashboard'))
 
     try:
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
 
         cur.execute("""
@@ -2612,7 +2708,7 @@ def reset_late_mess():
         return "Unauthorized", 403
 
     try:
-        conn = mysql_pool.get_connection()                  # ✅ Get connection from pool
+        conn = get_db_connection()                  # ✅ Get connection from pool
         cur = conn.cursor()
 
         cur.execute("DELETE FROM late_mess")
@@ -2652,7 +2748,7 @@ def mess_skip():
         meals = [meal for meal in ['breakfast', 'lunch', 'dinner', 'snacks']
                  if meal in request.form]
 
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
 
         try:
@@ -2703,7 +2799,7 @@ def mess_skip():
         return redirect(url_for('mess_skip'))
 
     # ---------- Fetch all skips for this user ----------
-    conn = mysql_pool.get_connection()
+    conn = get_db_connection()
     cur = conn.cursor(dictionary=True)
     skips = []
     try:
@@ -2731,7 +2827,7 @@ def mess_skip():
 @login_required
 def check_mess_cut():
     date = request.args.get('date')
-    conn = mysql_pool.get_connection()
+    conn = get_db_connection()
     cur = conn.cursor()
     cur.execute("""
         SELECT 1 FROM mess_cut
@@ -2759,7 +2855,7 @@ def admin_mess_skips():
     skips = {'breakfast': [], 'lunch': [], 'dinner': [], 'snacks': []}
     skip_counts = {'breakfast': 0, 'lunch': 0, 'dinner': 0, 'snacks': 0}
 
-    conn = mysql_pool.get_connection()
+    conn = get_db_connection()
     cur = conn.cursor(dictionary=True)
     try:
         print(f"Fetching mess skips for {tomorrow}, excluding mess_cut users")
@@ -2812,7 +2908,7 @@ def approve_late(lm_id):
         return jsonify({'error': 'Unauthorized'}), 403
 
     try:
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor()
 
         # Update the late_mess status to 'approved'
@@ -2848,7 +2944,7 @@ def approve_bulk():
         return "No emails provided", 400
 
     try:
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor(MySQLdb.cursors.DictCursor)
 
         for email in emails:
@@ -2880,7 +2976,7 @@ def mess_menu():
     days = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"]
 
     try:
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("SELECT day, meal_type, item FROM mess_menu")
         rows = cur.fetchall()
@@ -2912,7 +3008,7 @@ def update_menu():
     data = request.get_json()
 
     try:
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor()
         for day, meals in data.items():
             for meal_type, item in meals.items():
@@ -2936,12 +3032,48 @@ def update_menu():
 
 
 from flask import request, render_template, redirect, url_for, flash
-from flask_mail import Mail,Message
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
+import requests as brevo_requests
 
 # Serializer for generating and validating tokens
 s = URLSafeTimedSerializer(app.config['SECRET_KEY'])
-mail = Mail(app)
+
+
+def send_email_via_brevo(to_email, to_name, subject, html_content):
+    """
+    Sends transactional email through Brevo's HTTP API instead of SMTP.
+    Requires BREVO_API_KEY (and optionally BREVO_SENDER_EMAIL / BREVO_SENDER_NAME)
+    to be set in Config / environment variables.
+    """
+    api_key = app.config.get('BREVO_API_KEY')
+    if not api_key:
+        raise RuntimeError("BREVO_API_KEY is not set in config/environment.")
+
+    payload = {
+        "sender": {
+            "name": app.config.get('BREVO_SENDER_NAME', 'Mess App'),
+            "email": app.config.get('BREVO_SENDER_EMAIL', 'no-reply@example.com'),
+        },
+        "to": [{"email": to_email, "name": to_name}],
+        "subject": subject,
+        "htmlContent": html_content,
+    }
+    headers = {
+        "accept": "application/json",
+        "api-key": api_key,
+        "content-type": "application/json",
+    }
+    response = brevo_requests.post(
+        "https://api.brevo.com/v3/smtp/email",
+        json=payload,
+        headers=headers,
+        timeout=10,
+    )
+    if response.status_code not in (200, 201):
+        raise RuntimeError(f"Brevo API error {response.status_code}: {response.text}")
+    return response.json()
+
+
 @app.route('/forgot', methods=['GET', 'POST'])
 def forgot():
     if request.method == 'POST':
@@ -2955,7 +3087,7 @@ def forgot():
         conn = None
         cur = None
         try:
-            conn = mysql_pool.get_connection()
+            conn = get_db_connection()
             cur = conn.cursor(dictionary=True)
             cur.execute("SELECT * FROM users WHERE email=%s", (email,))
             user = cur.fetchone()
@@ -2968,15 +3100,19 @@ def forgot():
             token = s.dumps(email, salt='password-reset-salt')
             reset_url = url_for('reset_password', token=token, _external=True)
 
-            # Prepare email
-            msg = Message(
-                subject="Password Reset Request",
-                recipients=[email],
-                body=f"Hello {user['name']},\n\nTo reset your password, click the link below:\n{reset_url}\n\nThis link is valid for 30 minutes.",
-                sender=app.config['MAIL_DEFAULT_SENDER']
+            html_content = (
+                f"<p>Hello {user['name']},</p>"
+                f"<p>To reset your password, click the link below:</p>"
+                f"<p><a href=\"{reset_url}\">{reset_url}</a></p>"
+                f"<p>This link is valid for 30 minutes.</p>"
             )
 
-            mail.send(msg)
+            send_email_via_brevo(
+                to_email=email,
+                to_name=user['name'],
+                subject="Password Reset Request",
+                html_content=html_content,
+            )
             flash("Password reset link has been sent to your email.", "success")
             return redirect(url_for('login'))
 
@@ -3017,7 +3153,7 @@ def reset_password(token):
 
         hashed_pw = generate_password_hash(password)
 
-        conn = mysql_pool.get_connection()
+        conn = get_db_connection()
         cur = conn.cursor()
         cur.execute("UPDATE users SET password=%s WHERE email=%s", (hashed_pw, email))
         conn.commit()
