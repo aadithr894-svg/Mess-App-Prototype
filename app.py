@@ -28,11 +28,11 @@ mysql_pool = pooling.MySQLConnectionPool(
     pool_size=DB_POOL_SIZE,
     pool_reset_session=True,
     connection_timeout=10,
-    host="tokaido.proxy.rlwy.net",
+    host="altaria.proxy.rlwy.net",
     database="mess_app",
-    port=13459,
+    port=15197,
     user="root",
-    password="cEwarayamfiJIVpmEbDoPJoBAVgkFSSv",
+    password="LRAnbeQlEPvIuXAdGYSzlVxsoPUmDWXM",
 )
 
 
